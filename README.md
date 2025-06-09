@@ -358,6 +358,37 @@ The server includes comprehensive logging with different levels:
 
 Logs are output to stderr to avoid interfering with MCP communication.
 
+## CI/CD Pipeline
+
+### Automated Builds and Releases
+
+This repository includes a comprehensive CI/CD pipeline that automatically:
+
+- ✅ **Tests** code on every push and pull request
+- ✅ **Builds** multi-platform binaries (Windows, Linux, macOS - x64, ARM64)
+- ✅ **Creates** Docker images for linux/amd64 and linux/arm64
+- ✅ **Publishes** to GitHub Container Registry (ghcr.io)
+- ✅ **Generates** GitHub releases with downloadable assets
+
+### Required Setup for Contributors
+
+To enable Docker image publishing, repository maintainers need to configure:
+
+1. **GHCR_TOKEN Secret**: Personal Access Token with `write:packages` scope
+   - See [docs/CI-CD-SETUP.md](docs/CI-CD-SETUP.md) for detailed instructions
+
+2. **Optional**: NUGET_API_KEY for NuGet package publishing
+
+### Triggering Releases
+
+```bash
+# Create and push a new version tag
+git tag v1.0.x
+git push origin v1.0.x
+```
+
+This automatically triggers the full CI/CD pipeline and creates a GitHub release.
+
 ## Docker Images
 
 Docker images are available on GitHub Container Registry:
