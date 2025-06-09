@@ -108,15 +108,7 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    - name: Log in to Docker Hub
-      if: startsWith(github.ref, 'refs/tags/v')
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
-
     - name: Log in to GitHub Container Registry
-      if: startsWith(github.ref, 'refs/tags/v')
       uses: docker/login-action@v3
       with:
         registry: ghcr.io
@@ -127,9 +119,7 @@ jobs:
       id: meta
       uses: docker/metadata-action@v5
       with:
-        images: |
-          jamesburton/docker-mcp-server
-          ghcr.io/${{ github.repository }}
+        images: ghcr.io/${{ github.repository }}
         tags: |
           type=ref,event=branch
           type=ref,event=pr
@@ -144,7 +134,7 @@ jobs:
         context: .
         file: ./Dockerfile
         platforms: linux/amd64,linux/arm64
-        push: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        push: ${{ github.event_name == 'push' }}
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
         cache-from: type=gha
@@ -203,9 +193,9 @@ jobs:
         echo "- macOS Apple Silicon: \`DockerMcpServer-osx-arm64.tar.gz\`" >> release_notes.md
         echo "" >> release_notes.md
         echo "### Docker Images" >> release_notes.md
-        echo "Docker images are available on Docker Hub and GitHub Container Registry:" >> release_notes.md
-        echo "- \`docker pull jamesburton/docker-mcp-server:${GITHUB_REF#refs/tags/}\`" >> release_notes.md
+        echo "Docker images are available on GitHub Container Registry:" >> release_notes.md
         echo "- \`docker pull ghcr.io/jamesburton/dockermcpserver:${GITHUB_REF#refs/tags/}\`" >> release_notes.md
+        echo "- \`docker pull ghcr.io/jamesburton/dockermcpserver:latest\`" >> release_notes.md
         echo "" >> release_notes.md
         echo "### Installation" >> release_notes.md
         echo "See the [README.md](https://github.com/jamesburton/DockerMcpServer/blob/main/README.md) for detailed installation and configuration instructions." >> release_notes.md
@@ -258,10 +248,11 @@ jobs:
         path: ./nupkg/*.nupkg
         retention-days: 30
 
-    - name: Publish to NuGet (Release only)
-      if: startsWith(github.ref, 'refs/tags/v')
-      run: |
-        dotnet nuget push ./nupkg/*.nupkg \
-          --api-key ${{ secrets.NUGET_API_KEY }} \
-          --source https://api.nuget.org/v3/index.json \
-          --skip-duplicate
+    # Uncomment below to publish to NuGet (requires NUGET_API_KEY secret)
+    # - name: Publish to NuGet (Release only)
+    #   if: startsWith(github.ref, 'refs/tags/v')
+    #   run: |
+    #     dotnet nuget push ./nupkg/*.nupkg \
+    #       --api-key ${{ secrets.NUGET_API_KEY }} \
+    #       --source https://api.nuget.org/v3/index.json \
+    #       --skip-duplicate
