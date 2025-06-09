@@ -40,25 +40,6 @@ The CI/CD pipeline uses GitHub Container Registry (ghcr.io) to publish Docker im
    - Value: Paste the Personal Access Token you created
    - Click "Add secret"
 
-## Optional Secrets
-
-### NUGET_API_KEY (Optional - for NuGet Package Publishing)
-
-If you want to publish NuGet packages automatically:
-
-1. **Get NuGet API Key**
-   - Go to https://www.nuget.org/account/apikeys
-   - Create a new API key with push permissions
-   - Scope it to your package if desired
-
-2. **Add to Repository**
-   - Repository Settings → Secrets and variables → Actions
-   - Name: `NUGET_API_KEY`
-   - Value: Your NuGet API key
-
-3. **Enable NuGet Publishing**
-   - Uncomment the NuGet publishing section in `.github/workflows/ci-cd.yml`
-
 ## Verification
 
 After adding the `GHCR_TOKEN` secret:

@@ -377,7 +377,7 @@ To enable Docker image publishing, repository maintainers need to configure:
 1. **GHCR_TOKEN Secret**: Personal Access Token with `write:packages` scope
    - See [docs/CI-CD-SETUP.md](docs/CI-CD-SETUP.md) for detailed instructions
 
-2. **Optional**: NUGET_API_KEY for NuGet package publishing
+2. **Optional**: Configure additional secrets for extended functionality as needed
 
 ### Triggering Releases
 
