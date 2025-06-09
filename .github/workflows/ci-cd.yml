@@ -1,0 +1,267 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  PROJECT_PATH: 'DockerMcpServer/DockerMcpServer.csproj'
+  SOLUTION_PATH: 'DockerMcpServer.sln'
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Restore dependencies
+      run: dotnet restore ${{ env.SOLUTION_PATH }}
+
+    - name: Build
+      run: dotnet build ${{ env.SOLUTION_PATH }} --no-restore --configuration Release
+
+    - name: Test
+      run: dotnet test ${{ env.SOLUTION_PATH }} --no-build --configuration Release --verbosity normal
+
+  build:
+    name: Build Multi-Platform
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    strategy:
+      matrix:
+        runtime: [win-x64, win-x86, win-arm64, linux-x64, linux-arm64, osx-x64, osx-arm64]
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Restore dependencies
+      run: dotnet restore ${{ env.PROJECT_PATH }}
+
+    - name: Publish Self-Contained
+      run: |
+        dotnet publish ${{ env.PROJECT_PATH }} \
+          --configuration Release \
+          --runtime ${{ matrix.runtime }} \
+          --self-contained true \
+          --output ./publish/${{ matrix.runtime }} \
+          -p:PublishSingleFile=true \
+          -p:EnableCompressionInSingleFile=true \
+          -p:IncludeNativeLibrariesForSelfExtract=true
+
+    - name: Create Archive (Windows)
+      if: startsWith(matrix.runtime, 'win-')
+      run: |
+        cd ./publish/${{ matrix.runtime }}
+        zip -r ../../DockerMcpServer-${{ matrix.runtime }}.zip .
+
+    - name: Create Archive (Unix)
+      if: "!startsWith(matrix.runtime, 'win-')"
+      run: |
+        cd ./publish/${{ matrix.runtime }}
+        tar -czf ../../DockerMcpServer-${{ matrix.runtime }}.tar.gz .
+
+    - name: Upload Build Artifacts (Windows)
+      if: startsWith(matrix.runtime, 'win-')
+      uses: actions/upload-artifact@v4
+      with:
+        name: DockerMcpServer-${{ matrix.runtime }}
+        path: DockerMcpServer-${{ matrix.runtime }}.zip
+        retention-days: 30
+
+    - name: Upload Build Artifacts (Unix)
+      if: "!startsWith(matrix.runtime, 'win-')"
+      uses: actions/upload-artifact@v4
+      with:
+        name: DockerMcpServer-${{ matrix.runtime }}
+        path: DockerMcpServer-${{ matrix.runtime }}.tar.gz
+        retention-days: 30
+
+  docker:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Docker Hub
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Log in to GitHub Container Registry
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.repository_owner }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: |
+          jamesburton/docker-mcp-server
+          ghcr.io/${{ github.repository }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=semver,pattern={{major}}
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push Docker images
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./Dockerfile
+        platforms: linux/amd64,linux/arm64
+        push: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [build, docker]
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: ./artifacts
+
+    - name: Prepare release assets
+      run: |
+        mkdir -p ./release-assets
+        find ./artifacts -name "*.zip" -o -name "*.tar.gz" | while read file; do
+          cp "$file" ./release-assets/
+        done
+
+    - name: Generate Release Notes
+      id: release_notes
+      run: |
+        echo "## Docker MCP Server ${GITHUB_REF#refs/tags/}" >> release_notes.md
+        echo "" >> release_notes.md
+        echo "### Features" >> release_notes.md
+        echo "- Complete Docker MCP server with 49+ tools" >> release_notes.md
+        echo "- Full container lifecycle management with 35+ configuration options" >> release_notes.md
+        echo "- Docker Compose support with stack management" >> release_notes.md
+        echo "- Network and volume management with advanced features" >> release_notes.md
+        echo "- Image operations with registry support" >> release_notes.md
+        echo "- System monitoring and maintenance tools" >> release_notes.md
+        echo "- Enterprise-grade security and error handling" >> release_notes.md
+        echo "" >> release_notes.md
+        echo "### Downloads" >> release_notes.md
+        echo "Choose the appropriate download for your platform:" >> release_notes.md
+        echo "" >> release_notes.md
+        echo "**Windows:**" >> release_notes.md
+        echo "- Windows x64: \`DockerMcpServer-win-x64.zip\`" >> release_notes.md
+        echo "- Windows x86: \`DockerMcpServer-win-x86.zip\`" >> release_notes.md
+        echo "- Windows ARM64: \`DockerMcpServer-win-arm64.zip\`" >> release_notes.md
+        echo "" >> release_notes.md
+        echo "**Linux:**" >> release_notes.md
+        echo "- Linux x64: \`DockerMcpServer-linux-x64.tar.gz\`" >> release_notes.md
+        echo "- Linux ARM64: \`DockerMcpServer-linux-arm64.tar.gz\`" >> release_notes.md
+        echo "" >> release_notes.md
+        echo "**macOS:**" >> release_notes.md
+        echo "- macOS Intel: \`DockerMcpServer-osx-x64.tar.gz\`" >> release_notes.md
+        echo "- macOS Apple Silicon: \`DockerMcpServer-osx-arm64.tar.gz\`" >> release_notes.md
+        echo "" >> release_notes.md
+        echo "### Docker Images" >> release_notes.md
+        echo "Docker images are available on Docker Hub and GitHub Container Registry:" >> release_notes.md
+        echo "- \`docker pull jamesburton/docker-mcp-server:${GITHUB_REF#refs/tags/}\`" >> release_notes.md
+        echo "- \`docker pull ghcr.io/jamesburton/dockermcpserver:${GITHUB_REF#refs/tags/}\`" >> release_notes.md
+        echo "" >> release_notes.md
+        echo "### Installation" >> release_notes.md
+        echo "See the [README.md](https://github.com/jamesburton/DockerMcpServer/blob/main/README.md) for detailed installation and configuration instructions." >> release_notes.md
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: ./release-assets/*
+        body_path: release_notes.md
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  package:
+    name: Package for Distribution
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Create NuGet Package
+      run: |
+        dotnet pack ${{ env.PROJECT_PATH }} \
+          --configuration Release \
+          --output ./nupkg \
+          -p:PackageId=DockerMcpServer \
+          -p:PackageVersion=${{ github.ref_name != 'main' && github.ref_name || '1.0.0-dev' }} \
+          -p:Authors="James Burton" \
+          -p:Description="Comprehensive Docker MCP Server for Model Context Protocol" \
+          -p:PackageProjectUrl="https://github.com/jamesburton/DockerMcpServer" \
+          -p:RepositoryUrl="https://github.com/jamesburton/DockerMcpServer.git" \
+          -p:PackageLicenseExpression="MIT" \
+          -p:PackageReadmeFile="README.md" \
+          -p:PackageTags="docker;mcp;model-context-protocol;ai;claude"
+
+    - name: Upload NuGet Package
+      uses: actions/upload-artifact@v4
+      with:
+        name: nuget-package
+        path: ./nupkg/*.nupkg
+        retention-days: 30
+
+    - name: Publish to NuGet (Release only)
+      if: startsWith(github.ref, 'refs/tags/v')
+      run: |
+        dotnet nuget push ./nupkg/*.nupkg \
+          --api-key ${{ secrets.NUGET_API_KEY }} \
+          --source https://api.nuget.org/v3/index.json \
+          --skip-duplicate
